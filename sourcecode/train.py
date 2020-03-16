@@ -53,8 +53,9 @@ def parse_arguments():
                         help="saved state for discriminator optimizer")
 
     parser.add_argument("--images_dir", action="store", type=str,
+                        default="/workdir/data",
                         # default="../data/celeba",
-                        default=os.environ['SM_CHANNEL_TRAINING'],
+                        # default=os.environ['SM_CHANNEL_TRAINING'],
                         help="path for the images directory")
 
     parser.add_argument("--folder_distributed", action="store", type=bool,
@@ -66,13 +67,15 @@ def parse_arguments():
                         help="whether to randomly mirror the images during training")
 
     parser.add_argument("--sample_dir", action="store", type=str,
+                        default="/workdir/samples",
                         # default="samples/1/",
-                        default=os.environ['SM_MODEL_DIR'],
+                        # default=os.environ['SM_MODEL_DIR'],
                         help="path for the generated samples directory")
 
     parser.add_argument("--model_dir", action="store", type=str,
+                        default="/workdir/models",
                         # default="models/1/",
-                        default=os.environ['SM_MODEL_DIR'],
+                        # default=os.environ['SM_MODEL_DIR'],
                         help="path for saved models directory")
 
     parser.add_argument("--loss_function", action="store", type=str,
@@ -83,7 +86,7 @@ def parse_arguments():
                              "hinge, relativistic-hinge")
 
     parser.add_argument("--depth", action="store", type=int,
-                        default=6,
+                        default=5,
                         help="Depth of the GAN")
 
     parser.add_argument("--latent_size", action="store", type=int,
@@ -91,7 +94,7 @@ def parse_arguments():
                         help="latent size for the generator")
 
     parser.add_argument("--batch_size", action="store", type=int,
-                        default=20,
+                        default=10,
                         help="batch_size for training")
 
     parser.add_argument("--start", action="store", type=int,
@@ -150,6 +153,10 @@ def parse_arguments():
     parser.add_argument("--num_workers", action="store", type=int,
                         default=3,
                         help="number of parallel workers for reading files")
+
+    parser.add_argument("--gcloud_bucket", action="store", type=str,
+                        default=None,
+                        help="name of google cloud storage bucket e.g. gs://bucket_name")
 
     args = parser.parse_args()
     print('args={}'.format(args))
@@ -258,7 +265,8 @@ def main(args):
         sample_dir=args.sample_dir,
         save_dir=args.model_dir,
         log_dir=args.model_dir,
-        start=args.start
+        start=args.start,
+        gcloud_bucket=args.gcloud_bucket
     )
 
 

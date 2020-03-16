@@ -100,8 +100,11 @@ class Generator(th.nn.Module):
 class Discriminator(th.nn.Module):
     """ Discriminator of the GAN """
 
-    def __init__(self, depth=7, feature_size=512,
-                 use_eql=True, gpu_parallelize=False):
+    def __init__(self,
+                 depth=7,
+                 feature_size=512,
+                 use_eql=True,
+                 gpu_parallelize=False):
         """
         constructor for the class
         :param depth: total depth of the discriminator
@@ -221,9 +224,14 @@ class MSG_GAN:
             device: device to run the GAN on (GPU / CPU)
     """
 
-    def __init__(self, depth=7, latent_size=512,
-                 use_eql=True, use_ema=True, ema_decay=0.999,
+    def __init__(self,
+                 depth=7,
+                 latent_size=512,
+                 use_eql=True,
+                 use_ema=True,
+                 ema_decay=0.999,
                  device=th.device("cpu")):
+
         """ constructor for the class """
         from torch.nn import DataParallel
 
@@ -330,16 +338,18 @@ class MSG_GAN:
 
         return loss.item()
 
-    def create_grid(self, samples, img_files):
+    def create_grid(self, samples, img_files, gcloud_bucket=None):
         """
         utility function to create a grid of GAN samples
         :param samples: generated samples for storing list[Tensors]
         :param img_files: list of names of files to write
+        :param gcloud_bucket: Google cloud storage bucket to copy samples to.
         :return: None (saves multiple files)
         """
         from torchvision.utils import save_image
         from torch.nn.functional import interpolate
         from numpy import sqrt, power
+        import subprocess
 
         # dynamically adjust the colour of the images
         samples = [Generator.adjust_dynamic_range(sample) for sample in samples]
@@ -354,11 +364,36 @@ class MSG_GAN:
             save_image(sample, img_file, nrow=int(sqrt(sample.shape[0])),
                        normalize=True, scale_each=True, padding=0)
 
-    def train(self, data, gen_optim, dis_optim, loss_fn, normalize_latents=True,
-              start=1, num_epochs=12, feedback_factor=10, checkpoint_factor=1,
-              data_percentage=100, num_samples=36,
-              log_dir=None, sample_dir="./samples",
-              save_dir="./models"):
+        # If we have passed in a path to a google cloud storage location
+        # then copy the samples there.
+        #
+        if gcloud_bucket:
+            sample_dir = "/samples/"
+            # Save generator.
+            #
+            subprocess.check_call([
+                'gsutil', 'cp',
+                 img_file,
+                 gcloud_bucket + sample_dir
+            ])
+
+
+    def train(self,
+              data,
+              gen_optim,
+              dis_optim,
+              loss_fn,
+              normalize_latents=True,
+              start=1,
+              num_epochs=12,
+              feedback_factor=10,
+              checkpoint_factor=1,
+              data_percentage=100,
+              num_samples=36,
+              log_dir=None,
+              sample_dir="./samples",
+              save_dir="./models",
+              gcloud_bucket=None):
         """
         Method for training the network
         :param data: pytorch dataloader which iterates over images
@@ -379,10 +414,12 @@ class MSG_GAN:
         :param log_dir: path to directory for saving the loss.log file
         :param sample_dir: path to directory for saving generated samples' grids
         :param save_dir: path to directory for saving the trained models
+        :param gcloud_bucket: path to google cloud storage bucket (e.g. gs://bucket_name)
         :return: None (writes multiple files to disk)
         """
 
         from torch.nn.functional import avg_pool2d
+        import subprocess
 
         # turn the generator and discriminator into train mode
         self.gen.train()
@@ -475,11 +512,18 @@ class MSG_GAN:
 
                     dis_optim.zero_grad()
                     gen_optim.zero_grad()
-                    with th.no_grad():
-                        self.create_grid(
-                            self.gen(fixed_input) if not self.use_ema
-                            else self.gen_shadow(fixed_input),
-                            gen_img_files)
+
+                    # Don't want to waist time generating images if we are
+                    # training in the cloud. Therefore only create images
+                    # during training when we have not passed in a cloud bucket
+                    # path (e.g. training locally).
+                    #
+                    if gcloud_bucket is None:
+                        with th.no_grad():
+                            self.create_grid(
+                                self.gen(fixed_input) if not self.use_ema
+                                else self.gen_shadow(fixed_input),
+                                gen_img_files)
 
                 # increment the global_step:
                 global_step += 1
@@ -492,6 +536,8 @@ class MSG_GAN:
             print("Time taken for epoch: %.3f secs" % (stop_time - start_time))
 
             if epoch % checkpoint_factor == 0 or epoch == 1 or epoch == num_epochs:
+            # if True:
+                print("writing model to disk")
                 os.makedirs(save_dir, exist_ok=True)
                 gen_save_file = os.path.join(save_dir, "GAN_GEN_" + str(epoch) + ".pth")
                 dis_save_file = os.path.join(save_dir, "GAN_DIS_" + str(epoch) + ".pth")
@@ -505,10 +551,61 @@ class MSG_GAN:
                 th.save(gen_optim.state_dict(), gen_optim_save_file)
                 th.save(dis_optim.state_dict(), dis_optim_save_file)
 
+                # If specified, save components of the model to google
+                # cloud container.
+                #
+                model_dir = "/models/"
+                if gcloud_bucket is not None:
+                    # Save generator.
+                    #
+                    subprocess.check_call([
+                        'gsutil', 'cp',
+                         gen_save_file,
+                         gcloud_bucket + model_dir
+                        # os.path.join(gcloud_bucket, gen_save_file)
+                    ])
+
+                    # Save discriminator.
+                    #
+                    subprocess.check_call([
+                        'gsutil', 'cp',
+                         dis_save_file,
+                         gcloud_bucket + model_dir
+                        # os.path.join(gcloud_bucket, dis_save_file)
+                    ])
+
+                    # Save the optimizer for the generator.
+                    #
+                    subprocess.check_call([
+                        'gsutil', 'cp',
+                         gen_optim_save_file,
+                         gcloud_bucket + model_dir
+                        # os.path.join(gcloud_bucket, gen_optim_save_file)
+                    ])
+
+                    # Save the optimizer for the generator.
+                    #
+                    subprocess.check_call([
+                        'gsutil', 'cp',
+                         dis_optim_save_file,
+                         gcloud_bucket + model_dir
+                        # os.path.join(gcloud_bucket, dis_optim_save_file)
+                    ])
+
+
                 if self.use_ema:
                     gen_shadow_save_file = os.path.join(save_dir, "GAN_GEN_SHADOW_"
                                                         + str(epoch) + ".pth")
                     th.save(self.gen_shadow.state_dict(), gen_shadow_save_file)
+
+                    # Save the moving average of the generator.
+                    #
+                    subprocess.check_call([
+                        'gsutil', 'cp',
+                         gen_shadow_save_file,
+                         gcloud_bucket + model_dir
+                    ])
+
 
         print("Training completed ...")
 
